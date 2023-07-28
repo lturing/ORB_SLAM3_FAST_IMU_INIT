@@ -1,0 +1,11 @@
+Examples/Monocular-Inertial/mono_inertial_euroc Vocabulary/ORBvoc.txt Examples/Monocular-Inertial/EuRoC.yaml /home/spurs/dataset/MH_05_difficult Examples/Monocular-Inertial/EuRoC_TimeStamps/MH05.txt 
+
+
+Examples/Stereo-Inertial/stereo_inertial_euroc Vocabulary/ORBvoc.txt Examples/Stereo-Inertial/EuRoC.yaml /home/spurs/dataset/MH_05_difficult Examples/Stereo-Inertial/EuRoC_TimeStamps/MH05.txt
+
+
+Examples/Monocular/mono_euroc  Vocabulary/ORBvoc.txt Examples/Monocular/EuRoC.yaml /home/spurs/dataset/MH_05_difficult Examples/Monocular/EuRoC_TimeStamps/MH05.txt
+
+
+python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_imu/MH_GT.txt CameraTrajectory.txt
+

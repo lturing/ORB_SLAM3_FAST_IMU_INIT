@@ -3210,7 +3210,7 @@ void Optimizer::InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &sc
         Eigen::Vector3d Vw = VV->estimate(); // Velocity is scaled after
         pKFi->SetVelocity(Vw.cast<float>());
 
-        if ((pKFi->GetGyroBias() - bg.cast<float>()).norm() > 0.01)
+        if (1) //(pKFi->GetGyroBias() - bg.cast<float>()).norm() > 0.01)
         {
             pKFi->SetNewBias(b);
             if (pKFi->mpImuPreintegrated)
@@ -3218,7 +3218,7 @@ void Optimizer::InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &sc
         }
         else
             pKFi->SetNewBias(b);
-
+        
 
     }
 }

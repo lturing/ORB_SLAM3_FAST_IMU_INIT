@@ -581,15 +581,16 @@ bool LoopClosing::DetectCommonRegionsFromBoW(std::vector<KeyFrame*> &vpBowCand, 
     int nBoWMatches = 20;
     int nBoWInliers = 15;
     int nSim3Inliers = 20;
-    int nProjMatches = 50;
-    int nProjOptMatches = 80;
+    int nProjMatches = 20;
+    int nProjOptMatches = 20;
 
     set<KeyFrame*> spConnectedKeyFrames = mpCurrentKF->GetConnectedKeyFrames();
 
     int nNumCovisibles = 10;
 
     ORBmatcher matcherBoW(0.9, true);
-    ORBmatcher matcher(0.75, true);
+    //ORBmatcher matcher(0.75, true);
+    ORBmatcher matcher(0.8, true);
 
     // Varibles to select the best numbe
     KeyFrame* pBestMatchedKF;

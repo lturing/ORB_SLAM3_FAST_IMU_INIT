@@ -104,10 +104,75 @@ IntegratedRotation::IntegratedRotation(const Eigen::Vector3f &angVel, const Bias
     }
 }
 
+
+Eigen::Quaternionf expmap(Eigen::Vector3f &w)
+{
+    Eigen::AngleAxisf aa(w.norm(), w.stableNormalized());
+    Eigen::Quaternionf q;
+    q = aa;
+    return q;
+}
+
+Eigen::Matrix3f hat(Eigen::Vector3f &w)
+{
+    return (Eigen::Matrix3f() << 0, -w.z(), w.y(),
+            w.z(), 0, -w.x(),
+            -w.y(), w.x(), 0)
+        .finished();
+}
+
+Eigen::Vector3f logmap(const Eigen::Quaternionf &q)
+{
+    Eigen::AngleAxisf aa(q);
+    return aa.angle() * aa.axis();
+}
+
+Eigen::Matrix3f right_jacobian(Eigen::Vector3f &w)
+{
+    static const double root2_eps = sqrt(std::numeric_limits<double>::epsilon());
+    static const double root4_eps = sqrt(root2_eps);
+    static const double qdrt720 = sqrt(sqrt(720.0));
+    static const double qdrt5040 = sqrt(sqrt(5040.0));
+    static const double sqrt24 = sqrt(24.0);
+    static const double sqrt120 = sqrt(120.0);
+
+    double angle = w.norm();
+    double cangle = cos(angle);
+    double sangle = sin(angle);
+    double angle2 = angle * angle;
+
+    double cos_term;
+    // compute (1-cos(x))/x^2, its taylor expansion around 0 is 1/2-x^2/24+x^4/720+o(x^6)
+    if (angle > root4_eps * qdrt720) {
+        cos_term = (1 - cangle) / angle2;
+    } else { // use taylor expansion to avoid singularity
+        cos_term = 0.5;
+        if (angle > root2_eps * sqrt24) { // we have to include x^2 term
+            cos_term -= angle2 / 24.0;
+        }
+    }
+
+    double sin_term;
+    // compute (x-sin(x))/x^3, its taylor expansion around 0 is 1/6-x^2/120+x^4/5040+o(x^6)
+    if (angle > root4_eps * qdrt5040) {
+        sin_term = (angle - sangle) / (angle * angle2);
+    } else {
+        sin_term = 1.0 / 6.0;
+        if (angle > root2_eps * sqrt120) { // we have to include x^2 term
+            sin_term -= angle2 / 120.0;
+        }
+    }
+
+    Eigen::Matrix3f hat_w = hat(w);
+    return Eigen::Matrix3f::Identity() - cos_term * hat_w + sin_term * hat_w * hat_w;
+}
+
+
 Preintegrated::Preintegrated(const Bias &b_, const Calib &calib)
 {
     Nga = calib.Cov;
     NgaWalk = calib.CovWalk;
+    mcalib = Calib(calib);
     Initialize(b_);
 }
 
@@ -117,7 +182,7 @@ Preintegrated::Preintegrated(Preintegrated* pImuPre): dT(pImuPre->dT),C(pImuPre-
     dP(pImuPre->dP), JRg(pImuPre->JRg), JVg(pImuPre->JVg), JVa(pImuPre->JVa), JPg(pImuPre->JPg), JPa(pImuPre->JPa),
     avgA(pImuPre->avgA), avgW(pImuPre->avgW), bu(pImuPre->bu), db(pImuPre->db), mvMeasurements(pImuPre->mvMeasurements)
 {
-
+    mcalib = Calib(pImuPre->mcalib);
 }
 
 void Preintegrated::CopyFrom(Preintegrated* pImuPre)
@@ -141,6 +206,7 @@ void Preintegrated::CopyFrom(Preintegrated* pImuPre)
     bu.CopyFrom(pImuPre->bu);
     db = pImuPre->db;
     mvMeasurements = pImuPre->mvMeasurements;
+    mcalib = Calib(pImuPre->mcalib);
 }
 
 
@@ -163,7 +229,101 @@ void Preintegrated::Initialize(const Bias &b_)
     avgW.setZero();
     dT=0.0f;
     mvMeasurements.clear();
+
+    delta.t = 0;
+    delta.q.setIdentity();
+    delta.p.setZero();
+    delta.v.setZero();
+    delta.cov.setZero();
+    delta.sqrt_inv_cov.setZero();
+
+    jacobian.dq_dbg.setZero();
+    jacobian.dp_dbg.setZero();
+    jacobian.dp_dba.setZero();
+    jacobian.dv_dbg.setZero();
+    jacobian.dv_dba.setZero();
 }
+
+//void Preintegrated::increment(double dt, const ImuData &data, const vector<3> &bg, const vector<3> &ba, bool compute_jacobian, bool compute_covariance) {
+// 
+void Preintegrated::IntegrateNewMeasurement_v2(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt, bool compute_jacobian, bool compute_covariance) {
+    //runtime_assert(dt >= 0, "dt cannot be negative.");
+
+    mvMeasurements.push_back(integrable(acceleration,angVel,dt));
+    Eigen::Vector3f w, a;
+    a << acceleration(0)-b.bax, acceleration(1)-b.bay, acceleration(2)-b.baz;
+    w << angVel(0)-b.bwx, angVel(1)-b.bwy, angVel(2)-b.bwz;
+
+    int ES_Q = 0;
+    int ES_P = 3;
+    int ES_V = 6;
+    int ES_BG = 9;
+    int ES_BA = 12;
+    int ES_SIZE = 15;
+
+    Eigen::DiagonalMatrix<float,3> cov_a, cov_w, cov_bg, cov_ba;
+
+    cov_a.diagonal() << mcalib.na_2, mcalib.na_2, mcalib.na_2;
+    cov_w.diagonal() << mcalib.ng_2, mcalib.ng_2, mcalib.ng_2;
+
+    cov_bg.diagonal() << mcalib.ngw_2, mcalib.ngw_2, mcalib.ngw_2;
+    cov_ba.diagonal() << mcalib.naw_2, mcalib.naw_2, mcalib.naw_2;
+
+    Eigen::Vector3f wdt = w * dt;
+
+    if (compute_covariance) {
+        Eigen::Matrix<float,9,9> A;
+        A.setIdentity();
+        A.block<3, 3>(ES_Q, ES_Q) = expmap(wdt).conjugate().matrix();
+        A.block<3, 3>(ES_V, ES_Q) = -dt * delta.q.matrix() * hat(a);
+        A.block<3, 3>(ES_P, ES_Q) = -0.5 * dt * dt * delta.q.matrix() * hat(a);
+        A.block<3, 3>(ES_P, ES_V) = dt * Eigen::Matrix3f::Identity();
+
+        Eigen::Matrix<float,9,6> B;
+        B.setZero();
+        B.block<3, 3>(ES_Q, ES_BG - ES_BG) = dt * right_jacobian(wdt);
+        B.block<3, 3>(ES_V, ES_BA - ES_BG) = dt * delta.q.matrix();
+        B.block<3, 3>(ES_P, ES_BA - ES_BG) = 0.5 * dt * dt * delta.q.matrix();
+
+        Eigen::Matrix<float,6, 6> white_noise_cov;
+        double inv_dt = 1.0 / std::max(dt, 1.0e-7f);
+        white_noise_cov.setZero();
+        white_noise_cov.block<3, 3>(ES_BG - ES_BG, ES_BG - ES_BG) = cov_w * inv_dt;
+        white_noise_cov.block<3, 3>(ES_BA - ES_BG, ES_BA - ES_BG) = cov_a * inv_dt;
+
+        delta.cov.block<9, 9>(ES_Q, ES_Q) = A * delta.cov.block<9, 9>(0, 0) * A.transpose() + B * white_noise_cov * B.transpose();
+        delta.cov.block<3, 3>(ES_BG, ES_BG) += cov_bg * dt;
+        delta.cov.block<3, 3>(ES_BA, ES_BA) += cov_ba * dt;
+    }
+
+    if (compute_jacobian) {
+        jacobian.dp_dbg += dt * jacobian.dv_dbg - 0.5 * dt * dt * delta.q.matrix() * hat(a) * jacobian.dq_dbg;
+        jacobian.dp_dba += dt * jacobian.dv_dba - 0.5 * dt * dt * delta.q.matrix();
+        jacobian.dv_dbg -= dt * delta.q.matrix() * hat(a) * jacobian.dq_dbg;
+        jacobian.dv_dba -= dt * delta.q.matrix();
+        jacobian.dq_dbg = expmap(wdt).conjugate().matrix() * jacobian.dq_dbg - dt * right_jacobian(wdt);
+    }
+
+    delta.t = delta.t + dt;
+    delta.p = delta.p + dt * delta.v + 0.5 * dt * dt * (delta.q * a);
+    delta.v = delta.v + dt * (delta.q * a);
+    delta.q = (delta.q * expmap(wdt)).normalized();
+}
+
+
+
+void Preintegrated::Reintegrate_v2(const Bias &bu_)
+{
+    std::unique_lock<std::mutex> lock(mMutex);
+    const std::vector<integrable> aux = mvMeasurements;
+    Initialize(bu_);
+    for(size_t i=0;i<aux.size();i++)
+        IntegrateNewMeasurement_v2(aux[i].a,aux[i].w,aux[i].t, true, false);
+}
+
+
+
+
 
 void Preintegrated::Reintegrate()
 {

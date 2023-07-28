@@ -60,7 +60,6 @@ Frame::Frame(const Frame &frame)
      mvDepth(frame.mvDepth), mBowVec(frame.mBowVec), mFeatVec(frame.mFeatVec),
      mDescriptors(frame.mDescriptors.clone()), mDescriptorsRight(frame.mDescriptorsRight.clone()),
      mvpMapPoints(frame.mvpMapPoints), mvbOutlier(frame.mvbOutlier), mImuCalib(frame.mImuCalib), mnCloseMPs(frame.mnCloseMPs),
-     mpImuPreintegrated(frame.mpImuPreintegrated), mpImuPreintegratedFrame(frame.mpImuPreintegratedFrame), mImuBias(frame.mImuBias),
      mnId(frame.mnId), mpReferenceKF(frame.mpReferenceKF), mnScaleLevels(frame.mnScaleLevels),
      mfScaleFactor(frame.mfScaleFactor), mfLogScaleFactor(frame.mfLogScaleFactor),
      mvScaleFactors(frame.mvScaleFactors), mvInvScaleFactors(frame.mvInvScaleFactors), mNameFile(frame.mNameFile), mnDataset(frame.mnDataset),
@@ -71,6 +70,7 @@ Frame::Frame(const Frame &frame)
      mvRightToLeftMatch(frame.mvRightToLeftMatch), mvStereo3Dpoints(frame.mvStereo3Dpoints),
      mTlr(frame.mTlr), mRlr(frame.mRlr), mtlr(frame.mtlr), mTrl(frame.mTrl),
      mTcw(frame.mTcw), mbHasPose(false), mbHasVelocity(false)
+     //mbHasVelocity(false)
 {
     for(int i=0;i<FRAME_GRID_COLS;i++)
         for(int j=0; j<FRAME_GRID_ROWS; j++){
@@ -81,15 +81,32 @@ Frame::Frame(const Frame &frame)
         }
 
     if(frame.mbHasPose)
+    {
         SetPose(frame.GetPose());
+    }
+    else 
+    {
+        mbHasPose = false;
+    }
+        
 
     if(frame.HasVelocity())
     {
         SetVelocity(frame.GetVelocity());
     }
 
+    if (frame.mvImus.size() > 1)
+    {
+        mpImuPreintegrated = frame.mpImuPreintegrated;
+        mpImuPreintegratedFrame = frame.mpImuPreintegratedFrame;
+        mImuBias = frame.mImuBias;
+    }
+
     mmProjectPoints = frame.mmProjectPoints;
     mmMatchedInImage = frame.mmMatchedInImage;
+
+    mvImus.clear();
+    std::copy(frame.mvImus.begin(), frame.mvImus.end(), std::inserter(mvImus, mvImus.begin()));
 
 #ifdef REGISTER_TIMES
     mTimeStereoMatch = frame.mTimeStereoMatch;
@@ -195,6 +212,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     monoRight = -1;
 
     AssignFeaturesToGrid();
+
+    mvImus.clear();
 }
 
 Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF, const IMU::Calib &ImuCalib)
@@ -283,6 +302,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     monoRight = -1;
 
     AssignFeaturesToGrid();
+    mvImus.clear();
 }
 
 
@@ -379,6 +399,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     }
 
     mpMutexImu = new std::mutex();
+    mvImus.clear();
 }
 
 

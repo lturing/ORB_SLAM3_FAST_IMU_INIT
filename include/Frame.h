@@ -298,6 +298,8 @@ public:
 
     int mnDataset;
 
+    std::vector<IMU::Point> mvImus;
+
 #ifdef REGISTER_TIMES
     double mTimeORB_Ext;
     double mTimeStereoMatch;

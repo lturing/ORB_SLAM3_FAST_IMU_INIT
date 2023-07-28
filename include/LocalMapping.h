@@ -42,7 +42,7 @@ class LocalMapping
 {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    LocalMapping(System* pSys, Atlas* pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName=std::string());
+    LocalMapping(System* pSys, Atlas* pAtlas, Settings* settings, const float bMonocular, bool bInertial, const string &_strSeqName=std::string());
 
     void SetLoopCloser(LoopClosing* pLoopCloser);
 
@@ -110,6 +110,9 @@ public:
     // not consider far points (clouds)
     bool mbFarPoints;
     float mThFarPoints;
+
+    Settings* mpSettings;
+    bool is_ready;
 
 #ifdef REGISTER_TIMES
     vector<double> vdKFInsert_ms;
@@ -180,6 +183,8 @@ protected:
     std::mutex mMutexAccept;
 
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
+    void InitializeIMU_v2(float priorG=1e2, float priorA=1e6, bool bFIBA=false);
+    
     void ScaleRefinement();
 
     bool bInitializing;

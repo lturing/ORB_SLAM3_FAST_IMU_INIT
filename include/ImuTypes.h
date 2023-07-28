@@ -106,9 +106,14 @@ class Calib
 
 public:
 
-    Calib(const Sophus::SE3<float> &Tbc, const float &ng, const float &na, const float &ngw, const float &naw)
+    Calib(const Sophus::SE3<float> &Tbc, const float &ng, const float &na, const float &ngw, const float &naw, const float& ng1, const float& na1, const float& ngw1, const float& naw1)
     {
         Set(Tbc,ng,na,ngw,naw);
+        ng_2 = ng1 * ng1;
+        na_2 = na1 * na1;
+        ngw_2 = ngw1 * ngw1;
+        naw_2 = naw1 * naw1;
+
     }
 
     Calib(const Calib &calib);
@@ -123,6 +128,7 @@ public:
     Sophus::SE3<float> mTbc;
     Eigen::DiagonalMatrix<float,6> Cov, CovWalk;
     bool mbIsSet;
+    float ng_2, na_2, ngw_2, naw_2;
 };
 
 //Integration of 1 gyro measurement
@@ -138,6 +144,25 @@ public:
     Eigen::Matrix3f rightJ; // right jacobian
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 };
+
+struct Delta {
+    float t;
+    Eigen::Quaternion<float> q;
+    Eigen::Vector3f p;
+    Eigen::Vector3f v;
+    Eigen::Matrix<float,15,15> cov; // ordered in q, p, v, bg, ba
+    Eigen::Matrix<float,15,15> sqrt_inv_cov;
+};
+
+struct Jacobian {
+    Eigen::Matrix3f dq_dbg;
+    Eigen::Matrix3f dp_dbg;
+    Eigen::Matrix3f dp_dba;
+    Eigen::Matrix3f dv_dbg;
+    Eigen::Matrix3f dv_dba;
+};
+
+
 
 //Preintegration of Imu Measurements
 class Preintegrated
@@ -177,7 +202,11 @@ public:
     void CopyFrom(Preintegrated* pImuPre);
     void Initialize(const Bias &b_);
     void IntegrateNewMeasurement(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt);
+    void IntegrateNewMeasurement_v2(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt, bool compute_jacobian, bool compute_covariance);
+
     void Reintegrate();
+    void Reintegrate_v2(const Bias &bu_);
+
     void MergePrevious(Preintegrated* pPrev);
     void SetNewBias(const Bias &bu_);
     IMU::Bias GetDeltaBias(const Bias &b_);
@@ -220,6 +249,9 @@ public:
     Eigen::Matrix3f JRg, JVg, JVa, JPg, JPa;
     Eigen::Vector3f avgA, avgW;
 
+    Calib mcalib;
+    Delta delta;
+    Jacobian jacobian;
 
 private:
     // Updated bias
@@ -258,6 +290,13 @@ Eigen::Matrix3f InverseRightJacobianSO3(const float &x, const float &y, const fl
 Eigen::Matrix3f InverseRightJacobianSO3(const Eigen::Vector3f &v);
 
 Eigen::Matrix3f NormalizeRotation(const Eigen::Matrix3f &R);
+
+
+Eigen::Quaternionf expmap(Eigen::Vector3f &w);
+Eigen::Matrix3f hat(Eigen::Vector3f &w);
+Eigen::Vector3f logmap(const Eigen::Quaternionf &q);
+
+Eigen::Matrix3f right_jacobian(Eigen::Vector3f &w);
 
 }
 

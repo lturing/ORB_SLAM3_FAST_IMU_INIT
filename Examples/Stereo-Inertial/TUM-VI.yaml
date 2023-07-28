@@ -77,6 +77,7 @@ IMU.NoiseAcc: 0.0028 # 0.04 (VINS) # 0.0028 (TUM) # 0.0028     # m/s^1.5
 IMU.GyroWalk: 0.000022 # 0.000022 (VINS and TUM) rad/s^1.5
 IMU.AccWalk: 0.00086 # 0.0004 (VINS) # 0.00086 # 0.00086    # m/s^2.5
 IMU.Frequency: 200.0
+IMU.IMUMethod: 1
 
 #--------------------------------------------------------------------------------------------
 # ORB Parameters

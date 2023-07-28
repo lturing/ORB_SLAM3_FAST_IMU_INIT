@@ -122,6 +122,8 @@ namespace ORB_SLAM3 {
         cv::Mat M1r() {return M1r_;}
         cv::Mat M2r() {return M2r_;}
 
+        int get_imu_method() {return imu_method;}
+
     private:
         template<typename T>
         T readParameter(cv::FileStorage& fSettings, const std::string& name, bool& found,const bool required = true){
@@ -227,6 +229,7 @@ namespace ORB_SLAM3 {
          * Other stuff
          */
         float thFarPoints_;
+        int imu_method;
 
     };
 };

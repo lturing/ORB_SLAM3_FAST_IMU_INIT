@@ -128,6 +128,99 @@ namespace ORB_SLAM3
         }
     }
 
+
+
+    bool TwoViewReconstruction::Reconstruct_v2(const std::vector<cv::KeyPoint>& vKeys1, const std::vector<cv::KeyPoint>& vKeys2, const vector<int> &vMatches12,
+                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+    {
+        mvKeys1.clear();
+        mvKeys2.clear();
+
+        mvKeys1 = vKeys1;
+        mvKeys2 = vKeys2;
+
+        // Fill structures with current keypoints and matches with reference frame
+        // Reference Frame: 1, Current Frame: 2
+        mvMatches12.clear();
+        mvMatches12.reserve(mvKeys2.size());
+        mvbMatched1.resize(mvKeys1.size());
+        for(size_t i=0, iend=vMatches12.size();i<iend; i++)
+        {
+            if(vMatches12[i]>=0)
+            {
+                mvMatches12.push_back(make_pair(i,vMatches12[i]));
+                mvbMatched1[i]=true;
+            }
+            else
+                mvbMatched1[i]=false;
+        }
+
+        const int N = mvMatches12.size();
+
+        // Indices for minimum set selection
+        vector<size_t> vAllIndices;
+        vAllIndices.reserve(N);
+        vector<size_t> vAvailableIndices;
+
+        for(int i=0; i<N; i++)
+        {
+            vAllIndices.push_back(i);
+        }
+
+        // Generate sets of 8 points for each RANSAC iteration
+        mvSets = vector< vector<size_t> >(mMaxIterations,vector<size_t>(8,0));
+
+        DUtils::Random::SeedRandOnce(0);
+
+        for(int it=0; it<mMaxIterations; it++)
+        {
+            vAvailableIndices = vAllIndices;
+
+            // Select a minimum set
+            for(size_t j=0; j<8; j++)
+            {
+                int randi = DUtils::Random::RandomInt(0,vAvailableIndices.size()-1);
+                int idx = vAvailableIndices[randi];
+
+                mvSets[it][j] = idx;
+
+                vAvailableIndices[randi] = vAvailableIndices.back();
+                vAvailableIndices.pop_back();
+            }
+        }
+
+        // Launch threads to compute in parallel a fundamental matrix and a homography
+        vector<bool> vbMatchesInliersH, vbMatchesInliersF;
+        float SH, SF;
+        Eigen::Matrix3f H, F;
+
+        thread threadH(&TwoViewReconstruction::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
+        thread threadF(&TwoViewReconstruction::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
+
+        // Wait until both threads have finished
+        threadH.join();
+        threadF.join();
+
+        // Compute ratio of scores
+        if(SH+SF == 0.f) return false;
+        float RH = SH/(SH+SF);
+
+        float minParallax = 1.0;
+
+        // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
+        if(RH>0.50) // if(RH>0.40)
+        {
+            //cout << "Initialization from Homography" << endl;
+            return ReconstructH_v2(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated);
+        }
+        else //if(pF_HF>0.6)
+        {
+            //cout << "Initialization from Fundamental" << endl;
+            return ReconstructF_v2(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated);
+        }
+    }
+
+    
     void TwoViewReconstruction::FindHomography(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &H21)
     {
         // Number of putative matches
@@ -568,6 +661,85 @@ namespace ORB_SLAM3
         return false;
     }
 
+
+    bool TwoViewReconstruction::ReconstructF_v2(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &F21, Eigen::Matrix3f &K,
+                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+    {
+        int N=0;
+        for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
+            if(vbMatchesInliers[i])
+                N++;
+
+        // Compute Essential Matrix from Fundamental Matrix
+        Eigen::Matrix3f E21 = K.transpose() * F21 * K;
+
+        Eigen::Matrix3f R1, R2;
+        Eigen::Vector3f t;
+
+        // Recover the 4 motion hypotheses
+        DecomposeE(E21,R1,R2,t);
+
+        Eigen::Vector3f t1 = t;
+        Eigen::Vector3f t2 = -t;
+
+        // Reconstruct with the 4 hyphoteses and check
+        vector<cv::Point3f> vP3D1, vP3D2, vP3D3, vP3D4;
+        vector<bool> vbTriangulated1,vbTriangulated2,vbTriangulated3, vbTriangulated4;
+        float parallax1,parallax2, parallax3, parallax4;
+
+        int nGood1 = CheckRT(R1,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D1, 4.0*mSigma2, vbTriangulated1, parallax1);
+        int nGood2 = CheckRT(R2,t1,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D2, 4.0*mSigma2, vbTriangulated2, parallax2);
+        int nGood3 = CheckRT(R1,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D3, 4.0*mSigma2, vbTriangulated3, parallax3);
+        int nGood4 = CheckRT(R2,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D4, 4.0*mSigma2, vbTriangulated4, parallax4);
+
+        int maxGood = max(nGood1,max(nGood2,max(nGood3,nGood4)));
+
+        int nsimilar = 0;
+        if(nGood1>0.7*maxGood)
+            nsimilar++;
+        if(nGood2>0.7*maxGood)
+            nsimilar++;
+        if(nGood3>0.7*maxGood)
+            nsimilar++;
+        if(nGood4>0.7*maxGood)
+            nsimilar++;
+
+        // If best reconstruction has enough parallax initialize
+        if(maxGood==nGood1)
+        {
+            vP3D = vP3D1;
+            vbTriangulated = vbTriangulated1;
+
+            T21 = Sophus::SE3f(R1, t1);
+            return true;
+        }else if(maxGood==nGood2)
+        {
+            vP3D = vP3D2;
+            vbTriangulated = vbTriangulated2;
+
+            T21 = Sophus::SE3f(R2, t1);
+            return true;
+        }else if(maxGood==nGood3)
+        {
+            vP3D = vP3D3;
+            vbTriangulated = vbTriangulated3;
+
+            T21 = Sophus::SE3f(R1, t2);
+            return true;
+        }else if(maxGood==nGood4)
+        {
+
+            vP3D = vP3D4;
+            vbTriangulated = vbTriangulated4;
+
+            T21 = Sophus::SE3f(R2, t2);
+            return true;
+        }
+
+        return false;
+    }
+
+
     bool TwoViewReconstruction::ReconstructH(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &H21, Eigen::Matrix3f &K,
                                              Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
@@ -732,6 +904,178 @@ namespace ORB_SLAM3
 
         return false;
     }
+
+
+
+
+    bool TwoViewReconstruction::ReconstructH_v2(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &H21, Eigen::Matrix3f &K,
+                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+    {
+        int N=0;
+        for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
+            if(vbMatchesInliers[i])
+                N++;
+
+        // We recover 8 motion hypotheses using the method of Faugeras et al.
+        // Motion and structure from motion in a piecewise planar environment.
+        // International Journal of Pattern Recognition and Artificial Intelligence, 1988
+        Eigen::Matrix3f invK = K.inverse();
+        Eigen::Matrix3f A = invK * H21 * K;
+
+        Eigen::JacobiSVD<Eigen::Matrix3f> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        Eigen::Matrix3f U = svd.matrixU();
+        Eigen::Matrix3f V = svd.matrixV();
+        Eigen::Matrix3f Vt = V.transpose();
+        Eigen::Vector3f w = svd.singularValues();
+
+        float s = U.determinant() * Vt.determinant();
+
+        float d1 = w(0);
+        float d2 = w(1);
+        float d3 = w(2);
+
+        if(d1/d2<1.00001 || d2/d3<1.00001)
+        {
+            return false;
+        }
+
+        vector<Eigen::Matrix3f> vR;
+        vector<Eigen::Vector3f> vt, vn;
+        vR.reserve(8);
+        vt.reserve(8);
+        vn.reserve(8);
+
+        //n'=[x1 0 x3] 4 posibilities e1=e3=1, e1=1 e3=-1, e1=-1 e3=1, e1=e3=-1
+        float aux1 = sqrt((d1*d1-d2*d2)/(d1*d1-d3*d3));
+        float aux3 = sqrt((d2*d2-d3*d3)/(d1*d1-d3*d3));
+        float x1[] = {aux1,aux1,-aux1,-aux1};
+        float x3[] = {aux3,-aux3,aux3,-aux3};
+
+        //case d'=d2
+        float aux_stheta = sqrt((d1*d1-d2*d2)*(d2*d2-d3*d3))/((d1+d3)*d2);
+
+        float ctheta = (d2*d2+d1*d3)/((d1+d3)*d2);
+        float stheta[] = {aux_stheta, -aux_stheta, -aux_stheta, aux_stheta};
+
+        for(int i=0; i<4; i++)
+        {
+            Eigen::Matrix3f Rp;
+            Rp.setZero();
+            Rp(0,0) = ctheta;
+            Rp(0,2) = -stheta[i];
+            Rp(1,1) = 1.f;
+            Rp(2,0) = stheta[i];
+            Rp(2,2) = ctheta;
+
+            Eigen::Matrix3f R = s*U*Rp*Vt;
+            vR.push_back(R);
+
+            Eigen::Vector3f tp;
+            tp(0) = x1[i];
+            tp(1) = 0;
+            tp(2) = -x3[i];
+            tp *= d1-d3;
+
+            Eigen::Vector3f t = U*tp;
+            vt.push_back(t / t.norm());
+
+            Eigen::Vector3f np;
+            np(0) = x1[i];
+            np(1) = 0;
+            np(2) = x3[i];
+
+            Eigen::Vector3f n = V*np;
+            if(n(2) < 0)
+                n = -n;
+            vn.push_back(n);
+        }
+
+        //case d'=-d2
+        float aux_sphi = sqrt((d1*d1-d2*d2)*(d2*d2-d3*d3))/((d1-d3)*d2);
+
+        float cphi = (d1*d3-d2*d2)/((d1-d3)*d2);
+        float sphi[] = {aux_sphi, -aux_sphi, -aux_sphi, aux_sphi};
+
+        for(int i=0; i<4; i++)
+        {
+            Eigen::Matrix3f Rp;
+            Rp.setZero();
+            Rp(0,0) = cphi;
+            Rp(0,2) = sphi[i];
+            Rp(1,1) = -1;
+            Rp(2,0) = sphi[i];
+            Rp(2,2) = -cphi;
+
+            Eigen::Matrix3f R = s*U*Rp*Vt;
+            vR.push_back(R);
+
+            Eigen::Vector3f tp;
+            tp(0) = x1[i];
+            tp(1) = 0;
+            tp(2) = x3[i];
+            tp *= d1+d3;
+
+            Eigen::Vector3f t = U*tp;
+            vt.push_back(t / t.norm());
+
+            Eigen::Vector3f np;
+            np(0) = x1[i];
+            np(1) = 0;
+            np(2) = x3[i];
+
+            Eigen::Vector3f n = V*np;
+            if(n(2) < 0)
+                n = -n;
+            vn.push_back(n);
+        }
+
+
+        int bestGood = 0;
+        int secondBestGood = 0;
+        int bestSolutionIdx = -1;
+        float bestParallax = -1;
+        vector<cv::Point3f> bestP3D;
+        vector<bool> bestTriangulated;
+
+        // Instead of applying the visibility constraints proposed in the Faugeras' paper (which could fail for points seen with low parallax)
+        // We reconstruct all hypotheses and check in terms of triangulated points and parallax
+        for(size_t i=0; i<8; i++)
+        {
+            float parallaxi;
+            vector<cv::Point3f> vP3Di;
+            vector<bool> vbTriangulatedi;
+            int nGood = CheckRT(vR[i],vt[i],mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K,vP3Di, 4.0*mSigma2, vbTriangulatedi, parallaxi);
+
+            if(nGood>bestGood)
+            {
+                secondBestGood = bestGood;
+                bestGood = nGood;
+                bestSolutionIdx = i;
+                bestParallax = parallaxi;
+                bestP3D = vP3Di;
+                bestTriangulated = vbTriangulatedi;
+            }
+            else if(nGood>secondBestGood)
+            {
+                secondBestGood = nGood;
+            }
+        }
+
+
+        if(secondBestGood<0.75*bestGood) //&& bestParallax>=minParallax && bestGood>minTriangulated && bestGood>0.9*N)
+        {
+            T21 = Sophus::SE3f(vR[bestSolutionIdx], vt[bestSolutionIdx]);
+            vbTriangulated = bestTriangulated;
+
+            vP3D = bestP3D;
+            return true;
+        }
+        
+        return false;
+    }
+
+
+
 
 
     void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, Eigen::Matrix3f &T)

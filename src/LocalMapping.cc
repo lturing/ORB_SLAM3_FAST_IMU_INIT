@@ -30,10 +30,10 @@
 namespace ORB_SLAM3
 {
 
-LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, bool bInertial, const string &_strSeqName):
+LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, Settings* settings, const float bMonocular, bool bInertial, const string &_strSeqName):
     mpSystem(pSys), mbMonocular(bMonocular), mbInertial(bInertial), mbResetRequested(false), mbResetRequestedActiveMap(false), mbFinishRequested(false), mbFinished(true), mpAtlas(pAtlas), bInitializing(false),
     mbAbortBA(false), mbStopped(false), mbStopRequested(false), mbNotStop(false), mbAcceptKeyFrames(true),
-    mIdxInit(0), mScale(1.0), mInitSect(0), mbNotBA1(true), mbNotBA2(true), mIdxIteration(0), infoInertial(Eigen::MatrixXd::Zero(9,9))
+    mIdxInit(0), mScale(1.0), mInitSect(0), mbNotBA1(true), mbNotBA2(true), mIdxIteration(0), infoInertial(Eigen::MatrixXd::Zero(9,9)), mpSettings(settings), is_ready(false)
 {
     mnMatchesInliers = 0;
 
@@ -43,6 +43,7 @@ LocalMapping::LocalMapping(System* pSys, Atlas *pAtlas, const float bMonocular, 
 
     mNumLM = 0;
     mNumKFCulling=0;
+
 
 #ifdef REGISTER_TIMES
     nLBA_exec = 0;
@@ -133,7 +134,8 @@ void LocalMapping::Run()
 
                         if(dist>0.05)
                             mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
-                        if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
+
+                        if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2() && (mpSettings->get_imu_method() == System::IMU_ORB_SLAM3))
                         {
                             if((mTinit<10.f) && (dist<0.02))
                             {
@@ -144,6 +146,7 @@ void LocalMapping::Run()
                                 mbBadImu = true;
                             }
                         }
+                        
 
                         bool bLarge = ((mpTracker->GetMatchesInliers()>75)&&mbMonocular)||((mpTracker->GetMatchesInliers()>100)&&!mbMonocular);
                         Optimizer::LocalInertialBA(mpCurrentKeyFrame, &mbAbortBA, mpCurrentKeyFrame->GetMap(),num_FixedKF_BA,num_OptKF_BA,num_MPs_BA,num_edges_BA, bLarge, !mpCurrentKeyFrame->GetMap()->GetIniertialBA2());
@@ -174,21 +177,49 @@ void LocalMapping::Run()
                     vnLBA_KFfixed.push_back(num_FixedKF_BA);
                     vnLBA_MPs.push_back(num_MPs_BA);
                 }
-
 #endif
-
                 // Initialize IMU here
-                if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
+                if (mpSettings->get_imu_method() == System::IMU_ORB_SLAM3)
                 {
-                    if (mbMonocular)
-                        InitializeIMU(1e2, 1e10, true);
-                    else
-                        InitializeIMU(1e2, 1e5, true);
+                    if(!mpCurrentKeyFrame->GetMap()->isImuInitialized() && mbInertial)
+                    {
+                        if (mbMonocular)
+                            InitializeIMU(1e2, 1e10, true);
+                        else
+                            InitializeIMU(1e2, 1e5, true);
+                    }
+                }
+                else if ((mpSettings->get_imu_method() == System::IMU_VINS) && !mpCurrentKeyFrame->GetMap()->GetIniertialBA2() && is_ready)
+                {
+                    for (int i = 0; i < 5; i++)
+                    {
+                        float priorG, priorA;
+                        if (i ==0)
+                        {
+                            priorG = 1e2;
+                            priorA = 1e5;
+                        }
+                        else if (i == 1)
+                        {
+                            priorG = 1.f;
+                            priorA = 1e5;
+                        }
+                        else
+                        {
+                            priorG = 0.0;
+                            priorA = 0.0;
+                        }
+                        //priorG = 0.0;
+                        //priorA = 0.0;
+                        InitializeIMU_v2(priorG, priorA, true);
+                    }
+                            
+                    bInitializing = false;
                 }
 
-
                 // Check redundant local Keyframes
-                KeyFrameCulling();
+                if (mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
+                    KeyFrameCulling();
 
 #ifdef REGISTER_TIMES
                 std::chrono::steady_clock::time_point time_EndKFCulling = std::chrono::steady_clock::now();
@@ -197,7 +228,7 @@ void LocalMapping::Run()
                 vdKFCulling_ms.push_back(timeKFCulling_ms);
 #endif
 
-                if ((mTinit<50.0f) && mbInertial)
+                if ((mTinit<50.0f) && mbInertial && (mpSettings->get_imu_method() == System::IMU_ORB_SLAM3))
                 {
                     if(mpCurrentKeyFrame->GetMap()->isImuInitialized() && mpTracker->mState==Tracking::OK) // Enter here everytime local-mapping is called
                     {
@@ -934,8 +965,6 @@ void LocalMapping::KeyFrameCulling()
         last_ID = aux_KF->mnId;
     }
 
-
-
     for(vector<KeyFrame*>::iterator vit=vpLocalKeyFrames.begin(), vend=vpLocalKeyFrames.end(); vit!=vend; vit++)
     {
         count++;
@@ -1170,6 +1199,9 @@ bool LocalMapping::isFinished()
     return mbFinished;
 }
 
+
+
+
 void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 {
     if (mbResetRequested)
@@ -1268,6 +1300,7 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 
     std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
 
+    std::cout << "num kf=" << mpAtlas->GetCurrentMap()->GetAllKeyFrames().size() << ", scale=" << mScale << ", bg=" << mbg.transpose() << ", ba=" << mba.transpose() << std::endl;
     if (mScale<1e-1)
     {
         cout << "scale too small" << endl;
@@ -1425,6 +1458,267 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 
     return;
 }
+
+
+//void LocalMapping::InitializeIMU_v2(float& scale, Eigen::Vector3f& bg, Eigen::Vector3f& ba, Eigen::Vector3f& gravity, float priorG, float priorA, bool bFIBA)
+void LocalMapping::InitializeIMU_v2(float priorG, float priorA, bool bFIBA)
+{
+    if (mbResetRequested)
+        return;
+
+    int min_kf = 40;
+    
+    // Retrieve all keyframe in temporal order
+    list<KeyFrame*> lpKF;
+    KeyFrame* pKF = mpCurrentKeyFrame;
+    while(pKF->mPrevKF)
+    {
+        lpKF.push_front(pKF);
+        pKF = pKF->mPrevKF;
+    }
+    lpKF.push_front(pKF);
+    vector<KeyFrame*> vpKF(lpKF.begin(),lpKF.end());
+
+    mFirstTs=vpKF.front()->mTimeStamp;
+    //if(mpCurrentKeyFrame->mTimeStamp-mFirstTs<minTime)
+    //    return;
+
+    bInitializing = true;
+
+    while(CheckNewKeyFrames())
+    {
+        ProcessNewKeyFrame();
+        vpKF.push_back(mpCurrentKeyFrame);
+        lpKF.push_back(mpCurrentKeyFrame);
+    }
+
+    if(vpKF.size()<min_kf)
+        return;
+    
+    if(mpAtlas->KeyFramesInMap()<min_kf)
+        return;
+    
+    const int N = vpKF.size();
+    //IMU::Bias b(ba[0], ba[1], ba[2], bg[0], bg[1], bg[2]);
+
+    //float PVIO_GRAVITY_NOMINAL = 9.80665;
+    //Eigen::Vector3f gravity_nominal{0, 0, -PVIO_GRAVITY_NOMINAL};
+
+    //Eigen::Quaternionf q = quaternion::FromTwoVectors(gravity, gravity_nominal);
+    //mbg = bg.cast<double>();
+    // Compute and KF velocities mRwg estimation
+    if (!mpCurrentKeyFrame->GetMap()->isImuInitialized())
+    {
+        Eigen::Matrix3f Rwg;
+        Eigen::Vector3f dirG;
+        dirG.setZero();
+        for(vector<KeyFrame*>::iterator itKF = vpKF.begin(); itKF!=vpKF.end(); itKF++)
+        {
+            if (!(*itKF)->mpImuPreintegrated)
+                continue;
+            if (!(*itKF)->mPrevKF)
+                continue;
+
+            dirG -= (*itKF)->mPrevKF->GetImuRotation() * (*itKF)->mpImuPreintegrated->GetUpdatedDeltaVelocity();
+            Eigen::Vector3f _vel = ((*itKF)->GetImuPosition() - (*itKF)->mPrevKF->GetImuPosition())/(*itKF)->mpImuPreintegrated->dT;
+            (*itKF)->SetVelocity(_vel);
+            (*itKF)->mPrevKF->SetVelocity(_vel);
+        }
+
+        dirG = dirG/dirG.norm();
+        Eigen::Vector3f gI(0.0f, 0.0f, -1.0f);
+        Eigen::Vector3f v = gI.cross(dirG);
+        const float nv = v.norm();
+        const float cosg = gI.dot(dirG);
+        const float ang = acos(cosg);
+        Eigen::Vector3f vzg = v*ang/nv;
+        Rwg = Sophus::SO3f::exp(vzg).matrix();
+        mRwg = Rwg.cast<double>();
+        mTinit = mpCurrentKeyFrame->mTimeStamp-mFirstTs;
+    }
+    else
+    {
+        mRwg = Eigen::Matrix3d::Identity();
+        mbg = mpCurrentKeyFrame->GetGyroBias().cast<double>();
+        mba = mpCurrentKeyFrame->GetAccBias().cast<double>();
+    }
+
+    mScale=1.0;
+
+    mInitTime = mpTracker->mLastFrame.mTimeStamp-vpKF.front()->mTimeStamp;
+
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+
+    Optimizer::InertialOptimization(mpAtlas->GetCurrentMap(), mRwg, mScale, mbg, mba, mbMonocular, infoInertial, false, false, priorG, priorA);
+    std::cout << std::fixed << std::setprecision(5) << "num kf=" << mpAtlas->GetCurrentMap()->GetAllKeyFrames().size() << ", scale=" << mScale << ", bg=" << mbg.transpose() << ", ba=" << mba.transpose() << std::endl;
+    
+    std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
+
+    if (mScale<1e-1)
+    {
+        cout << "scale too small" << endl;
+        bInitializing=false;
+        return;
+    }
+
+    //std::cout << "num kf=" << mpAtlas->GetCurrentMap()->GetAllKeyFrames().size() << ", bg=" << mbg.transpose() << ", ba=" << mba.transpose() << std::endl;
+    // Before this line we are not changing the map
+    {
+        
+        unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
+        if ((fabs(mScale - 1.f) > 0.00001) || !mbMonocular) {
+            Sophus::SE3f Twg(mRwg.cast<float>().transpose(), Eigen::Vector3f::Zero());
+            mpAtlas->GetCurrentMap()->ApplyScaledRotation(Twg, mScale, true);
+            mpTracker->UpdateFrameIMU(mScale, vpKF[0]->GetImuBias(), mpCurrentKeyFrame);
+        }
+
+        // Check if initialization OK
+        if (!mpAtlas->isImuInitialized())
+            for (int i = 0; i < N; i++) {
+                KeyFrame *pKF2 = vpKF[i];
+                pKF2->bImu = true;
+            }
+    }
+
+    mpTracker->UpdateFrameIMU(1.0,vpKF[0]->GetImuBias(),mpCurrentKeyFrame);
+    if (!mpAtlas->isImuInitialized())
+    {
+        mpAtlas->SetImuInitialized();
+        mpTracker->t0IMU = mpTracker->mCurrentFrame.mTimeStamp;
+        mpCurrentKeyFrame->bImu = true;
+    }
+
+    std::chrono::steady_clock::time_point t4 = std::chrono::steady_clock::now();
+    if (bFIBA)
+    {
+        if (priorA!=0.f)
+            Optimizer::FullInertialBA(mpAtlas->GetCurrentMap(), 100, false, mpCurrentKeyFrame->mnId, NULL, true, priorG, priorA);
+        else
+            Optimizer::FullInertialBA(mpAtlas->GetCurrentMap(), 100, false, mpCurrentKeyFrame->mnId, NULL, false);
+    }
+
+    std::chrono::steady_clock::time_point t5 = std::chrono::steady_clock::now();
+
+    Verbose::PrintMess("Global Bundle Adjustment finished\nUpdating map ...", Verbose::VERBOSITY_NORMAL);
+
+    // Get Map Mutex
+    unique_lock<mutex> lock(mpAtlas->GetCurrentMap()->mMutexMapUpdate);
+
+    unsigned long GBAid = mpCurrentKeyFrame->mnId;
+
+    // Process keyframes in the queue
+    while(CheckNewKeyFrames())
+    {
+        ProcessNewKeyFrame();
+        vpKF.push_back(mpCurrentKeyFrame);
+        lpKF.push_back(mpCurrentKeyFrame);
+    }
+
+    // Correct keyframes starting at map first keyframe
+    list<KeyFrame*> lpKFtoCheck(mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.begin(),mpAtlas->GetCurrentMap()->mvpKeyFrameOrigins.end());
+
+    while(!lpKFtoCheck.empty())
+    {
+        KeyFrame* pKF = lpKFtoCheck.front();
+        const set<KeyFrame*> sChilds = pKF->GetChilds();
+        Sophus::SE3f Twc = pKF->GetPoseInverse();
+        for(set<KeyFrame*>::const_iterator sit=sChilds.begin();sit!=sChilds.end();sit++)
+        {
+            KeyFrame* pChild = *sit;
+            if(!pChild || pChild->isBad())
+                continue;
+
+            if(pChild->mnBAGlobalForKF!=GBAid)
+            {
+                Sophus::SE3f Tchildc = pChild->GetPose() * Twc;
+                pChild->mTcwGBA = Tchildc * pKF->mTcwGBA;
+
+                Sophus::SO3f Rcor = pChild->mTcwGBA.so3().inverse() * pChild->GetPose().so3();
+                if(pChild->isVelocitySet()){
+                    pChild->mVwbGBA = Rcor * pChild->GetVelocity();
+                }
+                else {
+                    Verbose::PrintMess("Child velocity empty!! ", Verbose::VERBOSITY_NORMAL);
+                }
+
+                pChild->mBiasGBA = pChild->GetImuBias();
+                pChild->mnBAGlobalForKF = GBAid;
+
+            }
+            lpKFtoCheck.push_back(pChild);
+        }
+
+        pKF->mTcwBefGBA = pKF->GetPose();
+        pKF->SetPose(pKF->mTcwGBA);
+
+        if(pKF->bImu)
+        {
+            pKF->mVwbBefGBA = pKF->GetVelocity();
+            pKF->SetVelocity(pKF->mVwbGBA);
+            pKF->SetNewBias(pKF->mBiasGBA);
+        } else {
+            cout << "KF " << pKF->mnId << " not set to inertial!! \n";
+        }
+
+        lpKFtoCheck.pop_front();
+    }
+
+    // Correct MapPoints
+    const vector<MapPoint*> vpMPs = mpAtlas->GetCurrentMap()->GetAllMapPoints();
+
+    for(size_t i=0; i<vpMPs.size(); i++)
+    {
+        MapPoint* pMP = vpMPs[i];
+
+        if(pMP->isBad())
+            continue;
+
+        if(pMP->mnBAGlobalForKF==GBAid)
+        {
+            // If optimized by Global BA, just update
+            pMP->SetWorldPos(pMP->mPosGBA);
+        }
+        else
+        {
+            // Update according to the correction of its reference keyframe
+            KeyFrame* pRefKF = pMP->GetReferenceKeyFrame();
+
+            if(pRefKF->mnBAGlobalForKF!=GBAid)
+                continue;
+
+            // Map to non-corrected camera
+            Eigen::Vector3f Xc = pRefKF->mTcwBefGBA * pMP->GetWorldPos();
+
+            // Backproject using corrected camera
+            pMP->SetWorldPos(pRefKF->GetPoseInverse() * Xc);
+        }
+    }
+
+    Verbose::PrintMess("Map updated!", Verbose::VERBOSITY_NORMAL);
+
+    mnKFs=vpKF.size();
+    mIdxInit++;
+
+    for(list<KeyFrame*>::iterator lit = mlNewKeyFrames.begin(), lend=mlNewKeyFrames.end(); lit!=lend; lit++)
+    {
+        (*lit)->SetBadFlag();
+        delete *lit;
+    }
+    mlNewKeyFrames.clear();
+
+    mpTracker->mState=Tracking::OK;
+    mpCurrentKeyFrame->GetMap()->IncreaseChangeIndex();
+
+    mpCurrentKeyFrame->GetMap()->SetIniertialBA1();
+    mpCurrentKeyFrame->GetMap()->SetIniertialBA2();
+    return;
+}
+
+
+
+
+
+
 
 void LocalMapping::ScaleRefinement()
 {

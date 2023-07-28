@@ -38,6 +38,7 @@
 #include "Settings.h"
 
 #include "GeometricCamera.h"
+#include "ImuInitializer.h"
 
 #include <mutex>
 #include <unordered_set>
@@ -145,6 +146,9 @@ public:
     std::vector<int> mvIniMatches;
     std::vector<cv::Point2f> mvbPrevMatched;
     std::vector<cv::Point3f> mvIniP3D;
+
+    //std::vector<Frame> mvFrames;
+    std::deque<Frame> mqFrames;
     Frame mInitialFrame;
 
     // Lists used to recover the full camera trajectory at the end of the execution.
@@ -171,8 +175,11 @@ public:
     double t0IMU; // time-stamp of IMU initialization
     bool mFastInit = false;
 
+    Settings* mPSettings;
 
     vector<MapPoint*> GetLocalMapMPS();
+
+    LocalMapping* getmpLocalMapper() { return mpLocalMapper;};
 
     bool mbWriteStats;
 

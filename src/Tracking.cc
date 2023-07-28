@@ -44,9 +44,9 @@ namespace ORB_SLAM3
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
     mState(NO_IMAGES_YET), mSensor(sensor), mTrackedFr(0), mbStep(false),
     mbOnlyTracking(false), mbMapUpdated(false), mbVO(false), mpORBVocabulary(pVoc), mpKeyFrameDB(pKFDB),
-    mbReadyToInitializate(false), mpSystem(pSys), mpViewer(NULL), bStepByStep(false),
+    mbReadyToInitializate(false), mpSystem(pSys), mpViewer(NULL), bStepByStep(false),mPSettings(settings),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
-    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))
+    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))//, mFastInit(true)
 {
     // Load camera parameters from settings file
     if(settings){
@@ -611,7 +611,7 @@ void Tracking::newParameterLoader(Settings *settings) {
     float Naw = settings->accWalk();
 
     const float sf = sqrt(mImuFreq);
-    mpImuCalib = new IMU::Calib(Tbc,Ng*sf,Na*sf,Ngw/sf,Naw/sf);
+    mpImuCalib = new IMU::Calib(Tbc,Ng*sf,Na*sf,Ngw/sf,Naw/sf, Ng, Na, Ngw, Naw);
 
     mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
 }
@@ -1416,7 +1416,7 @@ bool Tracking::ParseIMUParamFile(cv::FileStorage &fSettings)
     cout << "IMU accelerometer noise: " << Na << " m/s^2/sqrt(Hz)" << endl;
     cout << "IMU accelerometer walk: " << Naw << " m/s^3/sqrt(Hz)" << endl;
 
-    mpImuCalib = new IMU::Calib(Tbc,Ng*sf,Na*sf,Ngw/sf,Naw/sf);
+    mpImuCalib = new IMU::Calib(Tbc,Ng*sf,Na*sf,Ngw/sf,Naw/sf, Ng, Na, Ngw, Naw);
 
     mpImuPreintegratedFromLastKF = new IMU::Preintegrated(IMU::Bias(),*mpImuCalib);
 
@@ -1731,6 +1731,8 @@ void Tracking::PreintegrateIMU()
 
     mCurrentFrame.setIntegrated();
 
+    std::copy(mvImuFromLastFrame.begin(), mvImuFromLastFrame.end(), std::inserter(mCurrentFrame.mvImus, mCurrentFrame.mvImus.begin()));
+
     //Verbose::PrintMess("Preintegration is finished!! ", Verbose::VERBOSITY_DEBUG);
 }
 
@@ -1823,6 +1825,7 @@ void Tracking::Track()
             unique_lock<mutex> lock(mMutexImuQueue);
             mlQueueImuData.clear();
             CreateMapInAtlas();
+            mqFrames.clear();
             return;
         }
         else if(mCurrentFrame.mTimeStamp>mLastFrame.mTimeStamp+1.0)
@@ -1849,6 +1852,8 @@ void Tracking::Track()
                     cout << "Timestamp jump detected, before IMU initialization. Reseting..." << endl;
                     mpSystem->ResetActiveMap();
                 }
+
+                mqFrames.clear();
                 return;
             }
 
@@ -2143,7 +2148,7 @@ void Tracking::Track()
             mState = OK;
         else if (mState == OK)
         {
-            if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
+            if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD))
             {
                 Verbose::PrintMess("Track lost for less than one second...", Verbose::VERBOSITY_NORMAL);
                 if(!pCurrentMap->isImuInitialized() || !pCurrentMap->GetIniertialBA2())
@@ -2292,10 +2297,11 @@ void Tracking::Track()
             mCurrentFrame.mpReferenceKF = mpReferenceKF;
 
         mLastFrame = Frame(mCurrentFrame);
+        if (mCurrentFrame.mvImus.size() > 1 && (mPSettings->get_imu_method() == System::IMU_VINS) && !mpAtlas->GetCurrentMap()->GetIniertialBA2() && mCurrentFrame.HasPose())
+        {
+            mqFrames.push_back(Frame(mCurrentFrame));
+        }
     }
-
-
-
 
     if(mState==OK || mState==RECENTLY_LOST)
     {
@@ -2318,6 +2324,138 @@ void Tracking::Track()
         }
 
     }
+
+
+    int init_frame_index_gap = 5;
+    int sliding_window_size = 10;
+    int min_length = init_frame_index_gap * (sliding_window_size-1) + 1;
+    int f_length = mqFrames.size();
+    std::vector<Frame> frames;
+    if (f_length > min_length && (mPSettings->get_imu_method() == System::IMU_VINS) && !mpAtlas->GetCurrentMap()->GetIniertialBA2() && !getmpLocalMapper()->is_ready) //  !bimuInit) // && false)
+    {
+        while(mqFrames.size() > min_length)
+        {
+            mqFrames.pop_front();
+
+        }
+        f_length = mqFrames.size();
+
+        cout << "starting imu initializing" << endl;
+        for (int i = sliding_window_size - 1; i >= 0; i--)
+        {
+            frames.push_back(Frame(mqFrames.at(f_length -1 - init_frame_index_gap * i )));
+        }
+
+        ImuInitializer imu_init = ImuInitializer(frames, mPSettings);
+        bool sfm_flag=true;
+        int step = 4;
+        for (int i = step; i < frames.size(); i+=step)
+        {
+            bool flag = imu_init.sfm_check(frames[i-step], frames[i]);
+            if (!flag)
+            {
+                sfm_flag = false;
+                break;
+            }
+        }
+        
+        cout << "sfm init: " << sfm_flag << endl;
+
+        if (mpAtlas->isInertial() && sfm_flag)
+        {
+            for (int i = 1; i < sliding_window_size; i++)
+            {
+                int index_i = f_length -1 - min_length + init_frame_index_gap * (i-1);
+                int index_j = f_length -1 - min_length + init_frame_index_gap * i;
+                std::vector<IMU::Point> imus;
+                for (int j = index_i+1; j <= index_j; j++)
+                {
+                    imus.insert(imus.end(), mqFrames.at(j).mvImus.begin(), mqFrames.at(j).mvImus.end());
+                }
+                frames[i].mvImus.clear();
+                frames[i].mvImus.insert(frames[i].mvImus.begin(), imus.begin(), imus.end());
+
+                continue;
+
+                IMU::Bias b(0,0,0,0,0,0);
+                frames[i].mpImuPreintegratedFrame->Initialize(b);
+
+                int n = frames[i].mvImus.size()-1;
+                for (int j = 0; j < n; j++)
+                {
+                    float tstep;
+                    Eigen::Vector3f acc, angVel;
+                    if ((j == 0) && (j < (n-1)))
+                    {
+                        float tab = frames[i].mvImus[j+1].t-frames[i].mvImus[j].t;
+                        float tini = frames[i].mvImus[j].t-frames[i-1].mTimeStamp;
+
+                        acc = (frames[i].mvImus[j].a+frames[i].mvImus[j+1].a-
+                            (frames[i].mvImus[j+1].a-frames[i].mvImus[j].a)*(tini/tab))*0.5f;
+                        angVel = (frames[i].mvImus[j].w+frames[i].mvImus[j+1].w-
+                            (frames[i].mvImus[j+1].w-frames[i].mvImus[j].w)*(tini/tab))*0.5f;
+                        tstep = frames[i].mvImus[j+1].t-frames[i-1].mTimeStamp;
+                    }
+                    else if (j < (n-1))
+                    {
+                        acc = (frames[i].mvImus[j].a+frames[i].mvImus[j+1].a)*0.5f;
+                        angVel = (frames[i].mvImus[j].w+frames[i].mvImus[j+1].w)*0.5f;
+                        tstep = frames[i].mvImus[j+1].t-frames[i].mvImus[j].t;
+                    }
+                    else if ( (j > 0) && (j == (n-1)))
+                    {
+                        float tab = frames[i].mvImus[j+1].t-frames[i].mvImus[j].t;
+                        float tend = frames[i].mvImus[j+1].t-frames[i].mTimeStamp;
+                        acc = (frames[i].mvImus[j].a+frames[i].mvImus[j+1].a-
+                                (frames[i].mvImus[j+1].a-frames[i].mvImus[j].a)*(tend/tab))*0.5f;
+                        angVel = (frames[i].mvImus[j].w+frames[i].mvImus[j+1].w-
+                                (frames[i].mvImus[j+1].w-frames[i].mvImus[j].w)*(tend/tab))*0.5f;
+                        tstep = frames[i].mTimeStamp-frames[i].mvImus[j].t;
+                    }
+                    else if ( (j == 0) && (j == (n-1)))
+                    {
+                        acc = frames[i].mvImus[j].a;
+                        angVel = frames[i].mvImus[j].w;
+                        tstep = frames[i].mTimeStamp-frames[i-1].mTimeStamp;
+                    }
+
+                    if (tstep > 0)
+                    {
+                        frames[i].mpImuPreintegratedFrame->IntegrateNewMeasurement_v2(acc,angVel,tstep, true, false);
+                    }
+
+                }
+
+                // static, dp has value as noise.
+                //cout << "i=" << i << ", dP=" << frames[i].mpImuPreintegratedFrame->dP << ", n=" << n << endl;
+            }
+        
+            bool isInitialized = imu_init.init_imu();
+            cout << "imu initialized status: " << isInitialized << endl;
+
+            if (isInitialized)
+            {
+                float scale = 1.0;
+                Eigen::Vector3f bg = imu_init.bg;
+                Eigen::Vector3f ba = imu_init.ba;
+                Eigen::Vector3f gravity = imu_init.gravity;
+
+                getmpLocalMapper()->mbg = imu_init.bg.cast<double>();;
+                getmpLocalMapper()->is_ready = true;
+
+                //getmpLocalMapper()->InitializeIMU_v2(float scale, Eigen::Vector3f bg, Eigen::Vector3f ba, Eigen::Vector3f gravity, float priorG, float priorA, bool bFIBA);
+                //getmpLocalMapper()->InitializeIMU_v2(scale, imu_init.bg, imu_init.ba, imu_init.gravity, 0.f, 0.f, true);
+                mqFrames.clear();
+            }
+        }
+        //if (cnt > ((frames.size() - 1) - 2))
+        //{
+
+        //}
+
+    }
+
+
 
 #ifdef REGISTER_LOOP
     if (Stop()) {
@@ -3834,6 +3972,8 @@ void Tracking::Reset(bool bLocMap)
     if(mpViewer)
         mpViewer->Release();
 
+    mqFrames.clear();
+
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
 
@@ -3924,6 +4064,8 @@ void Tracking::ResetActiveMap(bool bLocMap)
 
     if(mpViewer)
         mpViewer->Release();
+
+    mqFrames.clear();
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
