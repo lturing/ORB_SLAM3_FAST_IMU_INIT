@@ -1,3 +1,7 @@
+
+> 由于orbslam3在imu初始化最少需要15秒，且判断运动的条件容易导致reset，导致初始化变得困难。主要的改进：1）更改运动判断条件，借鉴rlp_vio和vins_fusion中的初始化部分，减少reset；2）imu未初始化前，纯视觉位姿优化；3）当满足imu初始化条件后，才进行vio优化。在euroc数据集上，这里改进后的orbslam3跟原始的orbslam3在双目imu上的定位精度相当，但单目imu会弱化一些。
+
+
 # ORB-SLAM3
 
 ### V1.0, December 22th, 2021
