@@ -47,6 +47,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mbReadyToInitializate(false), mpSystem(pSys), mpViewer(NULL), bStepByStep(false),mPSettings(settings),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0),
     mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), mpLastKeyFrame(static_cast<KeyFrame*>(NULL))//, mFastInit(true)
+    ,mbimuInit(false)
 {
     // Load camera parameters from settings file
     if(settings){
@@ -2148,6 +2149,7 @@ void Tracking::Track()
             mState = OK;
         else if (mState == OK)
         {
+            /*
             if ((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD))
             {
                 Verbose::PrintMess("Track lost for less than one second...", Verbose::VERBOSITY_NORMAL);
@@ -2161,7 +2163,9 @@ void Tracking::Track()
             }
             else
                 mState=RECENTLY_LOST; // visual to lost
-
+            */
+           
+            mState=RECENTLY_LOST; // visual to lost
             /*if(mCurrentFrame.mnId>mnLastRelocFrameId+mMaxFrames)
             {*/
                 mTimeStampLost = mCurrentFrame.mTimeStamp;
@@ -2438,7 +2442,7 @@ void Tracking::Track()
                 Eigen::Vector3f ba = imu_init.ba;
                 Eigen::Vector3f gravity = imu_init.gravity;
 
-                getmpLocalMapper()->mbg = imu_init.bg.cast<double>();;
+                //getmpLocalMapper()->mbg = imu_init.bg.cast<double>();;
                 getmpLocalMapper()->is_ready = true;
 
                 //getmpLocalMapper()->InitializeIMU_v2(float scale, Eigen::Vector3f bg, Eigen::Vector3f ba, Eigen::Vector3f gravity, float priorG, float priorA, bool bFIBA);
@@ -2453,6 +2457,8 @@ void Tracking::Track()
 
     }
 
+    if (mpAtlas->GetCurrentMap()->GetIniertialBA2())
+        mbimuInit = true;
 
 
 #ifdef REGISTER_LOOP
@@ -3972,6 +3978,7 @@ void Tracking::Reset(bool bLocMap)
 
     mqFrames.clear();
     getmpLocalMapper()->is_ready = false;
+    mbimuInit = false;
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
@@ -4067,6 +4074,7 @@ void Tracking::ResetActiveMap(bool bLocMap)
     mqFrames.clear();
 
     getmpLocalMapper()->is_ready = false;
+    mbimuInit = false;
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }

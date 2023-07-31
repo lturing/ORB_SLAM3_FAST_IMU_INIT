@@ -219,8 +219,8 @@ void LocalMapping::Run()
                 }
 
                 // Check redundant local Keyframes
-                if (mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
-                    KeyFrameCulling();
+                //if (mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
+                KeyFrameCulling();
 
 #ifdef REGISTER_TIMES
                 std::chrono::steady_clock::time_point time_EndKFCulling = std::chrono::steady_clock::now();
@@ -1469,7 +1469,9 @@ void LocalMapping::InitializeIMU_v2(float priorG, float priorA, bool bFIBA)
     if (mbResetRequested)
         return;
 
-    int min_kf = 40;
+    int min_kf = 25;
+    if (mbMonocular)
+        min_kf = 30;
     
     // Retrieve all keyframe in temporal order
     list<KeyFrame*> lpKF;

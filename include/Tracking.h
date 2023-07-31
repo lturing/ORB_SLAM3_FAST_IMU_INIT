@@ -182,6 +182,7 @@ public:
     LocalMapping* getmpLocalMapper() { return mpLocalMapper;};
 
     bool mbWriteStats;
+    bool mbimuInit;
 
 #ifdef REGISTER_TIMES
     void LocalMapStats2File();

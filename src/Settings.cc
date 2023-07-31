@@ -420,6 +420,7 @@ namespace ORB_SLAM3 {
         imuFrequency_ = readParameter<float>(fSettings,"IMU.Frequency",found);
 
         imu_method = readParameter<int>(fSettings,"IMU.IMUMethod",found, false);
+        imu_method = (imu_method > 1 ? 0 : imu_method);
 
         cv::Mat cvTbc = readParameter<cv::Mat>(fSettings,"IMU.T_b_c1",found);
         Tbc_ = Converter::toSophus(cvTbc);
