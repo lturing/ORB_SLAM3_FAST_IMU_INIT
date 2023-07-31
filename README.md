@@ -2,6 +2,7 @@
 1）更改运动判断条件，借鉴rlp_vio和vins_fusion中的imu初始化部分，减少reset；     
 2）imu未初始化前，纯视觉位姿优化；            
 3）当满足imu初始化条件后，才进行vio优化；   
+4）通过添加或修改配置文件中IMU.IMUMethod，切换imu初始化方法(0为orbslam3，1为改进后的)；      
 在euroc数据集上，这里改进后的orbslam3跟原始的orbslam3在双目imu上的定位精度相当，但单目imu会差一些；
 
 ### todo 
