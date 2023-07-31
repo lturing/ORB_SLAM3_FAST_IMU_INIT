@@ -215,6 +215,7 @@ void LocalMapping::Run()
                     }
                             
                     bInitializing = false;
+                    //is_ready = false;
                 }
 
                 // Check redundant local Keyframes
@@ -1100,6 +1101,8 @@ void LocalMapping::RequestReset()
         }
         usleep(3000);
     }
+
+    is_ready = false;
     cout << "LM: Map reset, Done!!!" << endl;
 }
 

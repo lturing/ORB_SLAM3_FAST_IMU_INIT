@@ -2375,8 +2375,6 @@ void Tracking::Track()
                 frames[i].mvImus.clear();
                 frames[i].mvImus.insert(frames[i].mvImus.begin(), imus.begin(), imus.end());
 
-                continue;
-
                 IMU::Bias b(0,0,0,0,0,0);
                 frames[i].mpImuPreintegratedFrame->Initialize(b);
 
@@ -2431,7 +2429,7 @@ void Tracking::Track()
             }
         
             bool isInitialized = imu_init.init_imu();
-            cout << "imu initialized status: " << isInitialized << endl;
+            cout << "imu initialized status: " << (isInitialized ? "sucessed" : "failed") << endl;
 
             if (isInitialized)
             {
@@ -3973,6 +3971,7 @@ void Tracking::Reset(bool bLocMap)
         mpViewer->Release();
 
     mqFrames.clear();
+    getmpLocalMapper()->is_ready = false;
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
@@ -4066,6 +4065,8 @@ void Tracking::ResetActiveMap(bool bLocMap)
         mpViewer->Release();
 
     mqFrames.clear();
+
+    getmpLocalMapper()->is_ready = false;
 
     Verbose::PrintMess("   End reseting! ", Verbose::VERBOSITY_NORMAL);
 }
