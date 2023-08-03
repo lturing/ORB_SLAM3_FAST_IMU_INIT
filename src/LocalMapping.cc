@@ -198,6 +198,8 @@ void LocalMapping::Run()
                         {
                             priorG = 1e2;
                             priorA = 1e5;
+                            if (mbMonocular)
+                                priorA = 1e10;
                         }
                         else if (i == 1)
                         {
@@ -1471,7 +1473,7 @@ void LocalMapping::InitializeIMU_v2(float priorG, float priorA, bool bFIBA)
 
     int min_kf = 25;
     if (mbMonocular)
-        min_kf = 30;
+        min_kf = 35;
     
     // Retrieve all keyframe in temporal order
     list<KeyFrame*> lpKF;
