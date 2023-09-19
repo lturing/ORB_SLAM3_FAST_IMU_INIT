@@ -77,7 +77,7 @@ private:
 
     // 1/fps in ms
     double mT;
-    float mImageWidth, mImageHeight;
+    int mImageWidth, mImageHeight;
     float mImageViewerScale;
 
     float mViewpointX, mViewpointY, mViewpointZ, mViewpointF;
@@ -93,6 +93,7 @@ private:
     std::mutex mMutexStop;
 
     bool mbStopTrack;
+    Settings* mpSettings;
 
 };
 

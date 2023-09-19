@@ -26,6 +26,8 @@
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
 #include "Settings.h"
+#include "ImuInitializer.h"
+
 
 #include <mutex>
 
@@ -112,7 +114,6 @@ public:
     float mThFarPoints;
 
     Settings* mpSettings;
-    bool is_ready;
 
 #ifdef REGISTER_TIMES
     vector<double> vdKFInsert_ms;
@@ -183,7 +184,8 @@ protected:
     std::mutex mMutexAccept;
 
     void InitializeIMU(float priorG = 1e2, float priorA = 1e6, bool bFirst = false);
-    void InitializeIMU_v2(float priorG=1e2, float priorA=1e6, bool bFIBA=false);
+    void VigInit(float priorG=1e2, float priorA=1e6, bool bFIBA=true);
+    void IMUAlign(float priorG=1e2, float priorA=1e6, bool bFIBA=true);
     
     void ScaleRefinement();
 

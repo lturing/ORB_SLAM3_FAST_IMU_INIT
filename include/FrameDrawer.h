@@ -20,6 +20,7 @@
 #ifndef FRAMEDRAWER_H
 #define FRAMEDRAWER_H
 
+#include "Settings.h"
 #include "Tracking.h"
 #include "MapPoint.h"
 #include "Atlas.h"
@@ -36,12 +37,13 @@ namespace ORB_SLAM3
 
 class Tracking;
 class Viewer;
+class Settings;
 
 class FrameDrawer
 {
 public:
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    FrameDrawer(Atlas* pAtlas);
+    FrameDrawer(Atlas* pAtlas, Settings* settings);
 
     // Update info from the last processed frame.
     void Update(Tracking *pTracker);

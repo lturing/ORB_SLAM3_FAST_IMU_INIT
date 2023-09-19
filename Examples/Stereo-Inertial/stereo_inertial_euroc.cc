@@ -219,6 +219,8 @@ int main(int argc, char **argv)
 
 
     }
+
+    cin.get();
     // Stop all threads
     SLAM.Shutdown();
 

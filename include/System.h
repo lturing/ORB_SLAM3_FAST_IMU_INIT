@@ -101,7 +101,8 @@ public:
 
     enum IMUMethod{
         IMU_ORB_SLAM3=0,
-        IMU_VINS=1
+        VIG_INIT=1,
+        IMU_INITIALIZATION=2
     };
 
 public:

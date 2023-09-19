@@ -38,7 +38,7 @@
 #include "Settings.h"
 
 #include "GeometricCamera.h"
-#include "ImuInitializer.h"
+
 
 #include <mutex>
 #include <unordered_set>
@@ -148,7 +148,6 @@ public:
     std::vector<cv::Point3f> mvIniP3D;
 
     //std::vector<Frame> mvFrames;
-    std::deque<Frame> mqFrames;
     Frame mInitialFrame;
 
     // Lists used to recover the full camera trajectory at the end of the execution.
@@ -178,8 +177,6 @@ public:
     Settings* mPSettings;
 
     vector<MapPoint*> GetLocalMapMPS();
-
-    LocalMapping* getmpLocalMapper() { return mpLocalMapper;};
 
     bool mbWriteStats;
     bool mbimuInit;

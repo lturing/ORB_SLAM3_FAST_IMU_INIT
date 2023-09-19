@@ -27,11 +27,15 @@
 namespace ORB_SLAM3
 {
 
-FrameDrawer::FrameDrawer(Atlas* pAtlas):both(false),mpAtlas(pAtlas)
+FrameDrawer::FrameDrawer(Atlas* pAtlas, Settings* settings):both(false),mpAtlas(pAtlas)
 {
     mState=Tracking::SYSTEM_NOT_READY;
-    mIm = cv::Mat(480,640,CV_8UC3, cv::Scalar(0,0,0));
-    mImRight = cv::Mat(480,640,CV_8UC3, cv::Scalar(0,0,0));
+    cv::Size imSize = settings->newImSize();
+    int imageHeight = imSize.height;
+    int imageWidth = imSize.width;
+
+    mIm = cv::Mat(imageHeight, imageWidth,CV_8UC3, cv::Scalar(0,0,0));
+    mImRight = cv::Mat(imageHeight, imageWidth,CV_8UC3, cv::Scalar(0,0,0));
 }
 
 cv::Mat FrameDrawer::DrawFrame(float imageScale)
@@ -99,7 +103,7 @@ cv::Mat FrameDrawer::DrawFrame(float imageScale)
         }
     }
 
-    if(imageScale != 1.f)
+    if(imageScale != 1.f && false)
     {
         int imWidth = im.cols / imageScale;
         int imHeight = im.rows / imageScale;
@@ -360,17 +364,26 @@ void FrameDrawer::DrawTextInfo(cv::Mat &im, int nState, cv::Mat &imText)
     int baseline=0;
     cv::Size textSize = cv::getTextSize(s.str(),cv::FONT_HERSHEY_PLAIN,1,1,&baseline);
 
-    imText = cv::Mat(im.rows+textSize.height+10,im.cols,im.type());
-    im.copyTo(imText.rowRange(0,im.rows).colRange(0,im.cols));
-    imText.rowRange(im.rows,imText.rows) = cv::Mat::zeros(textSize.height+10,im.cols,im.type());
-    cv::putText(imText,s.str(),cv::Point(5,imText.rows-5),cv::FONT_HERSHEY_PLAIN,1,cv::Scalar(255,255,255),1,8);
-
+    if(1)
+    {
+        imText = cv::Mat(im.rows,im.cols,im.type());
+        im.copyTo(imText.rowRange(0,im.rows).colRange(0,im.cols));
+        cv::putText(imText,s.str(),cv::Point(5,imText.rows-10),cv::FONT_HERSHEY_PLAIN,1,cv::Scalar(0,0,255),2,8);
+    }
+    else 
+    {
+        imText = cv::Mat(im.rows+textSize.height+10,im.cols,im.type());
+        im.copyTo(imText.rowRange(0,im.rows).colRange(0,im.cols));
+        imText.rowRange(im.rows,imText.rows) = cv::Mat::zeros(textSize.height+10,im.cols,im.type());
+        cv::putText(imText,s.str(),cv::Point(5,imText.rows-5),cv::FONT_HERSHEY_PLAIN,1,cv::Scalar(255,255,255),1,8);
+    }
 }
 
 void FrameDrawer::Update(Tracking *pTracker)
 {
     unique_lock<mutex> lock(mMutex);
     pTracker->mImGray.copyTo(mIm);
+
     mvCurrentKeys=pTracker->mCurrentFrame.mvKeys;
     mThDepth = pTracker->mCurrentFrame.mThDepth;
     mvCurrentDepth = pTracker->mCurrentFrame.mvDepth;

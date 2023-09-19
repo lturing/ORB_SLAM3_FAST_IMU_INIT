@@ -632,6 +632,69 @@ public:
 
 
 
+class EdgeGyro : public g2o::BaseUnaryEdge<3,Eigen::Vector3d,VertexGyroBias>
+{
+public:
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+
+    EdgeGyro(IMU::Preintegrated* pInt12, const Eigen::Matrix3d& Rwb1, const Eigen::Matrix3d& Rwb2):
+        mpInt12(pInt12), Rwb1(Rwb1), Rwb2(Rwb2) 
+    {
+            Eigen::Matrix3d Info = mpInt12->C.block<3, 3>(0, 0).cast<double>(); //.inverse();
+            Info = (Info+Info.transpose())/2;
+            Info = Info.inverse();
+            Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(Info);
+            Eigen::Matrix<double,3,1> eigs = es.eigenvalues();
+            for(int i=0;i<3;i++)
+                if(eigs[i]<1e-12)
+                    eigs[i]=0;
+            
+            Info = es.eigenvectors()*eigs.asDiagonal()*es.eigenvectors().transpose();
+            setInformation(Info);
+    }
+    virtual bool read(std::istream& is){return false;}
+    virtual bool write(std::ostream& os) const{return false;}
+
+    void computeError(){
+        const VertexGyroBias* VG = static_cast<const VertexGyroBias*>(_vertices[0]);
+
+        const IMU::Bias b(0.0,0.0,0.0,VG->estimate()[0],VG->estimate()[1],VG->estimate()[2]);
+
+        const Eigen::Matrix3d dR = mpInt12->GetDeltaRotation(b).cast<double>();
+        const Eigen::Vector3d er = LogSO3(dR.transpose()*Rwb1.transpose()*Rwb2);
+        _error = er;
+    }
+
+    virtual void linearizeOplus(){
+        
+        const VertexGyroBias* VG = static_cast<const VertexGyroBias*>(_vertices[0]);
+        const IMU::Bias b1(0.0, 0.0, 0.0, VG->estimate()[0], VG->estimate()[1], VG->estimate()[2]);
+        const IMU::Bias db = mpInt12->GetDeltaBias(b1);
+
+        Eigen::Vector3d dbg;
+        dbg << db.bwx, db.bwy, db.bwz;
+
+        const Eigen::Matrix3d dR = mpInt12->GetDeltaRotation(b1).cast<double>();
+        const Eigen::Matrix3d eR = dR.transpose()*Rwb1.transpose()*Rwb2;
+        const Eigen::Vector3d er = LogSO3(eR);
+        const Eigen::Matrix3d invJr = InverseRightJacobianSO3(er);
+
+        _jacobianOplusXi = -invJr*eR.transpose()*RightJacobianSO3(mpInt12->JRg.cast<double>()*dbg)*mpInt12->JRg.cast<double>(); // OK
+
+    }
+
+    Eigen::Matrix<double,3,3> GetHessian(){
+        linearizeOplus();
+        return _jacobianOplusXi.transpose() * information() * _jacobianOplusXi;
+    }
+
+    IMU::Preintegrated* mpInt12;
+    Eigen::Matrix3d Rwb1;
+    Eigen::Matrix3d Rwb2;
+};
+
+
+
 class EdgeGyroRW : public g2o::BaseBinaryEdge<3,Eigen::Vector3d,VertexGyroBias,VertexGyroBias>
 {
 public:
