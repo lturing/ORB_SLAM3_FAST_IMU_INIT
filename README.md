@@ -1,8 +1,8 @@
-由于orbslam3在imu初始化阶段最少需要15秒，且容易初始化失败，使程序无法正常运行。主要的改进：
-1）将高效的imu初始化方法[vig_init](https://github.com/zju3dv/vig-init)和[imu_initialization](https://github.com/dzunigan/imu_initialization)融合到orbslam3中，双目和rgbd最少需要3.75s(15 * 0.25s)，单目最少需要5s(20*0.25s)；
-2）imu未初始化前，纯视觉位姿优化；
-3）通过添加或修改配置文件中IMU.IMUMethod，切换imu初始化方法(0为orbslam3，1为vig_init，2为imu_initialization)；
-在euroc数据集上，vig_init和imu_initialization均能达到与orbslam3中的原有imu初始化的精度，同时，初始化时间大幅度降低
+由于orbslam3在imu初始化阶段最少需要15秒，且容易初始化失败，使程序无法正常运行。主要的改进：   
+1）将高效的imu初始化方法[vig_init](https://github.com/zju3dv/vig-init)和[imu_initialization](https://github.com/dzunigan/imu_initialization)融合到orbslam3中，双目和rgbd最少需要3.75s(15 * 0.25s)，单目最少需要5s(20*0.25s)；        
+2）imu未初始化前，纯视觉位姿优化；               
+3）通过添加或修改配置文件中IMU.IMUMethod，切换imu初始化方法(0为orbslam3，1为vig_init，2为imu_initialization)；                  
+在euroc数据集上，vig_init和imu_initialization均能达到与orbslam3中的原有imu初始化的精度，同时，初始化时间大幅度降低            
 
 ## 运行
 
@@ -32,7 +32,7 @@ python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_imu/MH_GT.
 
 ## demo
 
-* [b站](https://www.bilibili.com/video/BV1hz4y1L7to/)
+* [b站 单目imu演示视频](https://www.bilibili.com/video/BV1hz4y1L7to/)
 
 <div align=center><img src="./demo.jpg" width="90%"/></div>
 
